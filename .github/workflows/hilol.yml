@@ -12,7 +12,7 @@ jobs:
     steps:
 
       # ============================================================
-      # 1. SYSTEM INFORMATION
+      # SYSTEM INFORMATION
       # ============================================================
 
       - name: Collect system information
@@ -20,7 +20,7 @@ jobs:
         run: |
           set -u
 
-          mkdir -p reports
+          mkdir -p reports/benchmarks
 
           {
             echo "===== DATE ====="
@@ -60,13 +60,13 @@ jobs:
 
             echo
             echo "===== CPU FLAGS ====="
-            lscpu | grep -i "flags" || true
+            lscpu | grep -i flags || true
 
           } | tee reports/system-info.txt
 
 
       # ============================================================
-      # 2. INSTALL DEPENDENCIES
+      # DEPENDENCIES
       # ============================================================
 
       - name: Install dependencies
@@ -85,7 +85,7 @@ jobs:
 
 
       # ============================================================
-      # 3. HWLOC / CPU TOPOLOGY
+      # HWLOC
       # ============================================================
 
       - name: Check CPU topology
@@ -103,7 +103,7 @@ jobs:
 
 
       # ============================================================
-      # 4. DOWNLOAD XMRIG
+      # DOWNLOAD XMRIG
       # ============================================================
 
       - name: Download XMRig
@@ -114,13 +114,12 @@ jobs:
 
 
       # ============================================================
-      # 5. BUILD XMRIG
+      # BUILD XMRIG
       # ============================================================
 
       - name: Build XMRig
         shell: bash
         run: |
-
           cmake \
             -S xmrig \
             -B xmrig/build \
@@ -138,66 +137,15 @@ jobs:
 
 
       # ============================================================
-      # 6. SAVE XMRIG HELP
-      # ============================================================
-
-      - name: Save XMRig help
-        shell: bash
-        run: |
-          ./xmrig/build/xmrig --help \
-            2>&1 | tee reports/xmrig-help.txt || true
-
-
-      # ============================================================
-      # 7. CREATE BENCHMARK CONFIG
-      # ============================================================
-
-      - name: Create benchmark configuration
-        shell: bash
-        run: |
-
-          cat > xmrig/build/config.json <<'EOF'
-          {
-            "autosave": false,
-            "background": false,
-            "colors": false,
-            "donate-level": 0,
-            "print-time": 10,
-            "retries": 1,
-            "retry-pause": 1,
-            "syslog": false,
-            "watch": false,
-
-            "cpu": {
-              "enabled": true,
-              "huge-pages": false,
-              "hw-aes": true,
-              "priority": 0,
-              "yield": true
-            },
-
-            "pools": []
-          }
-          EOF
-
-          echo "===== BENCHMARK CONFIG ====="
-          cat xmrig/build/config.json
-
-
-      # ============================================================
-      # 8. RANDOMX THREAD SCALING
+      # RANDOMX 1-4 THREAD BENCHMARK
       # ============================================================
 
       - name: RandomX thread scaling benchmark
         shell: bash
         run: |
 
-          mkdir -p reports/benchmarks
-
           MAX_THREADS="$(nproc)"
 
-          # Your current GitHub runner reports 4 CPUs.
-          # Limit the scaling test to 4 threads.
           if [ "$MAX_THREADS" -gt 4 ]; then
             MAX_THREADS=4
           fi
@@ -213,11 +161,11 @@ jobs:
             echo "=============================================="
 
             ./xmrig/build/xmrig \
-              --config=xmrig/build/config.json \
-              --bench=30s \
+              --bench=10M \
+              --algo=rx/0 \
               --threads="$threads" \
               --no-huge-pages \
-              --print-time=10 \
+              --no-color \
               2>&1 | tee \
               "reports/benchmarks/randomx-${threads}threads.txt"
 
@@ -225,7 +173,7 @@ jobs:
 
 
       # ============================================================
-      # 9. STABILITY TEST
+      # REPEAT 4 THREAD BENCHMARK
       # ============================================================
 
       - name: RandomX stability benchmark
@@ -240,7 +188,7 @@ jobs:
 
           OUTPUT="reports/benchmarks/randomx-stability.txt"
 
-          echo "RandomX stability benchmark" | tee "$OUTPUT"
+          echo "RandomX 10M stability benchmark" | tee "$OUTPUT"
           echo "Threads: $THREADS" | tee -a "$OUTPUT"
           echo "Date: $(date -Is)" | tee -a "$OUTPUT"
 
@@ -258,11 +206,11 @@ jobs:
               | tee -a "$OUTPUT"
 
             ./xmrig/build/xmrig \
-              --config=xmrig/build/config.json \
-              --bench=30s \
+              --bench=10M \
+              --algo=rx/0 \
               --threads="$THREADS" \
               --no-huge-pages \
-              --print-time=10 \
+              --no-color \
               2>&1 | tee -a "$OUTPUT"
 
             sleep 3
@@ -271,10 +219,10 @@ jobs:
 
 
       # ============================================================
-      # 10. HUGE PAGES COMPARISON
+      # HUGE PAGES TEST
       # ============================================================
 
-      - name: Huge Pages comparison
+      - name: Huge Pages benchmark
         shell: bash
         run: |
 
@@ -290,11 +238,11 @@ jobs:
             | tee "$OUTPUT"
 
           ./xmrig/build/xmrig \
-            --config=xmrig/build/config.json \
-            --bench=30s \
+            --bench=10M \
+            --algo=rx/0 \
             --threads="$THREADS" \
             --no-huge-pages \
-            --print-time=10 \
+            --no-color \
             2>&1 | tee -a "$OUTPUT"
 
           echo | tee -a "$OUTPUT"
@@ -303,15 +251,15 @@ jobs:
             | tee -a "$OUTPUT"
 
           ./xmrig/build/xmrig \
-            --config=xmrig/build/config.json \
-            --bench=30s \
+            --bench=10M \
+            --algo=rx/0 \
             --threads="$THREADS" \
-            --print-time=10 \
+            --no-color \
             2>&1 | tee -a "$OUTPUT"
 
 
       # ============================================================
-      # 11. UPLOAD ALL RESULTS
+      # UPLOAD RESULTS
       # ============================================================
 
       - name: Upload benchmark results
