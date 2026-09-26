@@ -1,140 +1,190 @@
-
-name: Full Hardware Inspection
+name: RandomX CPU Benchmark
 
 on:
   workflow_dispatch:
 
 jobs:
-  inspect:
+  benchmark:
     runs-on: ubuntu-24.04
+
     timeout-minutes: 15
 
     steps:
-      - name: Install inspection tools
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y \
-            inxi lshw hwinfo dmidecode \
-            pciutils usbutils util-linux \
-            ethtool iproute2 numactl \
-            cpuid smartmontools nvme-cli \
-            mesa-utils
-
-      - name: Collect all hardware information
+      - name: Collect system information
         shell: bash
         run: |
+          set -u
+
           mkdir -p reports
 
-          report() {
-            local name="$1"
-            shift
-            {
-              echo "========================================"
-              echo "$name"
-              echo "========================================"
-              "$@" 2>&1 || true
-            } > "reports/${name}.txt"
-          }
+          {
+            echo "===== DATE ====="
+            date -Is
 
-          report "01-inxi" \
-            inxi -Fxxxz --no-host
+            echo
+            echo "===== OS ====="
+            cat /etc/os-release
 
-          report "02-lscpu" lscpu -e
-          report "03-lscpu-full" lscpu
-          report "04-cpuinfo" cat /proc/cpuinfo
-          report "05-cpuid" cpuid -1
-          report "06-cache" lscpu -C
+            echo
+            echo "===== KERNEL ====="
+            uname -a
 
-          report "07-lshw" sudo lshw
-          report "08-lshw-json" sudo lshw -json
-          report "09-hwinfo" sudo hwinfo --all
+            echo
+            echo "===== CPU ====="
+            lscpu
 
-          report "10-memory" free -h
-          report "11-meminfo" cat /proc/meminfo
-          report "12-numa" numactl --hardware
-          report "13-vmstat" vmstat -s
+            echo
+            echo "===== CPU COUNT ====="
+            nproc
 
-          report "14-disks" lsblk -a -O
-          report "15-filesystems" df -hT
-          report "16-partitions" \
-            sudo fdisk -l
-          report "17-mounts" findmnt
-          report "18-nvme" sudo nvme list
+            echo
+            echo "===== MEMORY ====="
+            free -h
 
-          report "19-pci" sudo lspci -vvvnn
-          report "20-pci-tree" lspci -tv
-          report "21-usb" lsusb -v
-          report "22-dmi" sudo dmidecode
+            echo
+            echo "===== CPU TOPOLOGY ====="
+            lscpu -e
 
-          report "23-kernel" uname -a
-          report "24-os" cat /etc/os-release
-          report "25-virtualization" \
-            systemd-detect-virt -v
-          report "26-kernel-modules" lsmod
-          report "27-boot" cat /proc/cmdline
+            echo
+            echo "===== CACHE ====="
+            lscpu -C || true
 
-          report "28-network" ip -details addr
-          report "29-network-links" ip -s link
-          report "30-network-routes" ip route
-          report "31-network-hardware" \
-            sudo lshw -class network
+            echo
+            echo "===== CPU FLAGS ====="
+            lscpu | grep -i flags || true
 
-          report "32-gpu" \
-            sudo lshw -class display
-          report "33-opengl" glxinfo -B
+            echo
+            echo "===== VIRTUALIZATION ====="
+            systemd-detect-virt || true
 
-          report "34-sensors" \
-            bash -c 'for d in /sys/class/hwmon/hwmon*; do
-              echo "$d"
-              cat "$d/name" 2>/dev/null
-              cat "$d"/temp*_input 2>/dev/null
-            done'
+          } | tee reports/system-info.txt
 
-          report "35-topology" \
-            bash -c 'find /sys/devices/system/cpu \
-              -name "index*" -o -name "topology"'
-
-          report "36-cache-sysfs" \
-            bash -c 'for d in /sys/devices/system/cpu/cpu0/cache/index*; do
-              echo "===== $d ====="
-              for f in "$d"/*; do
-                echo "$(basename "$f"): $(cat "$f" 2>/dev/null)"
-              done
-            done'
-
-          report "37-cpu-frequency" \
-            bash -c 'find /sys/devices/system/cpu \
-              -path "*/cpufreq/*" -type f \
-              -exec sh -c '\''echo "$1: $(cat "$1")"'\'' _ {} \;'
-
-          report "38-environment" \
-            bash -c 'env | grep -E \
-              "^(RUNNER_|ImageOS=|ImageVersion=|CI=)"'
-
-          report "39-cgroups" cat /proc/self/cgroup
-          report "40-uptime" uptime
-          report "41-dmesg" sudo dmesg
-
-      - name: Display main results
+      - name: Install build dependencies
         shell: bash
         run: |
-          for file in \
-            01-inxi \
-            03-lscpu-full \
-            06-cache \
-            10-memory \
-            14-disks \
-            25-virtualization \
-            36-cache-sysfs
-          do
-            echo "::group::$file"
-            cat "reports/$file.txt"
-            echo "::endgroup::"
+          sudo apt-get update
+          sudo apt-get install -y \
+            git \
+            build-essential \
+            cmake \
+            libuv1-dev \
+            libssl-dev \
+            hwloc
+
+      - name: Build XMRig
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/xmrig/xmrig.git
+
+          cmake -S xmrig -B xmrig/build \
+            -DWITH_HWLOC=ON \
+            -DWITH_TLS=ON
+
+          cmake --build xmrig/build \
+            --parallel "$(nproc)"
+
+          ./xmrig/build/xmrig --version
+
+      - name: RandomX benchmark - 1 to 4 threads
+        shell: bash
+        run: |
+          set -u
+
+          mkdir -p reports/benchmarks
+
+          MAX_THREADS="$(nproc)"
+
+          if [ "$MAX_THREADS" -gt 4 ]; then
+            MAX_THREADS=4
+          fi
+
+          echo "Detected CPUs: $(nproc)"
+          echo "Testing up to $MAX_THREADS threads"
+
+          for threads in $(seq 1 "$MAX_THREADS"); do
+
+            echo
+            echo "=============================================="
+            echo "RANDOMX BENCHMARK - ${threads} THREAD(S)"
+            echo "=============================================="
+
+            ./xmrig/build/xmrig \
+              --bench=30s \
+              --threads="$threads" \
+              --no-huge-pages \
+              --print-time=10 \
+              2>&1 | tee \
+              "reports/benchmarks/randomx-${threads}threads.txt"
+
           done
 
-      - name: Upload complete report
+      - name: RandomX stability test - 5 runs
+        shell: bash
+        run: |
+          set -u
+
+          THREADS="$(nproc)"
+
+          if [ "$THREADS" -gt 4 ]; then
+            THREADS=4
+          fi
+
+          OUTPUT="reports/benchmarks/randomx-stability-5-runs.txt"
+
+          echo "RandomX stability test" | tee "$OUTPUT"
+          echo "Threads: $THREADS" | tee -a "$OUTPUT"
+          echo "Date: $(date -Is)" | tee -a "$OUTPUT"
+
+          for run in 1 2 3 4 5; do
+
+            echo | tee -a "$OUTPUT"
+            echo "==============================================" | tee -a "$OUTPUT"
+            echo "RUN $run / 5" | tee -a "$OUTPUT"
+            echo "==============================================" | tee -a "$OUTPUT"
+
+            ./xmrig/build/xmrig \
+              --bench=30s \
+              --threads="$THREADS" \
+              --no-huge-pages \
+              --print-time=10 \
+              2>&1 | tee -a "$OUTPUT"
+
+            sleep 3
+          done
+
+      - name: Huge Pages comparison
+        shell: bash
+        run: |
+          set -u
+
+          THREADS="$(nproc)"
+
+          if [ "$THREADS" -gt 4 ]; then
+            THREADS=4
+          fi
+
+          {
+            echo "===== WITHOUT HUGE PAGES ====="
+
+            ./xmrig/build/xmrig \
+              --bench=30s \
+              --threads="$THREADS" \
+              --no-huge-pages \
+              --print-time=10
+
+            echo
+            echo "===== WITH HUGE PAGES ====="
+
+            ./xmrig/build/xmrig \
+              --bench=30s \
+              --threads="$THREADS" \
+              --print-time=10
+
+          } 2>&1 | tee reports/benchmarks/huge-pages-comparison.txt
+
+      - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
-          name: complete-hardware-report
+          name: randomx-benchmark-results
           path: reports/
           retention-days: 7
