@@ -7,14 +7,12 @@ jobs:
   benchmark:
     runs-on: ubuntu-24.04
 
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Collect system information
         shell: bash
         run: |
-          set -u
-
           mkdir -p reports
 
           {
@@ -50,26 +48,34 @@ jobs:
             lscpu -C || true
 
             echo
-            echo "===== CPU FLAGS ====="
-            lscpu | grep -i flags || true
-
-            echo
             echo "===== VIRTUALIZATION ====="
             systemd-detect-virt || true
 
           } | tee reports/system-info.txt
 
-      - name: Install build dependencies
+      - name: Install dependencies
         shell: bash
         run: |
           sudo apt-get update
+
           sudo apt-get install -y \
             git \
             build-essential \
             cmake \
             libuv1-dev \
             libssl-dev \
+            libhwloc-dev \
             hwloc
+
+      - name: Verify HWLOC
+        shell: bash
+        run: |
+          echo "===== HWLOC VERSION ====="
+          hwloc-info --version || true
+
+          echo
+          echo "===== CPU TOPOLOGY ====="
+          lstopo-no-graphics || true
 
       - name: Build XMRig
         shell: bash
@@ -83,13 +89,13 @@ jobs:
           cmake --build xmrig/build \
             --parallel "$(nproc)"
 
+          echo
+          echo "===== XMRIG VERSION ====="
           ./xmrig/build/xmrig --version
 
-      - name: RandomX benchmark - 1 to 4 threads
+      - name: RandomX benchmark - thread scaling
         shell: bash
         run: |
-          set -u
-
           mkdir -p reports/benchmarks
 
           MAX_THREADS="$(nproc)"
@@ -99,13 +105,13 @@ jobs:
           fi
 
           echo "Detected CPUs: $(nproc)"
-          echo "Testing up to $MAX_THREADS threads"
+          echo "Testing: 1-$MAX_THREADS threads"
 
           for threads in $(seq 1 "$MAX_THREADS"); do
 
             echo
             echo "=============================================="
-            echo "RANDOMX BENCHMARK - ${threads} THREAD(S)"
+            echo "RANDOMX - ${threads} THREAD(S)"
             echo "=============================================="
 
             ./xmrig/build/xmrig \
@@ -118,18 +124,16 @@ jobs:
 
           done
 
-      - name: RandomX stability test - 5 runs
+      - name: RandomX stability test
         shell: bash
         run: |
-          set -u
-
           THREADS="$(nproc)"
 
           if [ "$THREADS" -gt 4 ]; then
             THREADS=4
           fi
 
-          OUTPUT="reports/benchmarks/randomx-stability-5-runs.txt"
+          OUTPUT="reports/benchmarks/randomx-stability.txt"
 
           echo "RandomX stability test" | tee "$OUTPUT"
           echo "Threads: $THREADS" | tee -a "$OUTPUT"
@@ -155,8 +159,6 @@ jobs:
       - name: Huge Pages comparison
         shell: bash
         run: |
-          set -u
-
           THREADS="$(nproc)"
 
           if [ "$THREADS" -gt 4 ]; then
@@ -180,7 +182,7 @@ jobs:
               --threads="$THREADS" \
               --print-time=10
 
-          } 2>&1 | tee reports/benchmarks/huge-pages-comparison.txt
+          } 2>&1 | tee reports/benchmarks/huge-pages.txt
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
