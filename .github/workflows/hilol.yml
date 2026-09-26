@@ -6,7 +6,6 @@ on:
 jobs:
   benchmark:
     runs-on: ubuntu-24.04
-
     timeout-minutes: 20
 
     steps:
@@ -137,6 +136,91 @@ jobs:
 
 
       # ============================================================
+      # CREATE EXPLICIT XMRIG CONFIG
+      # ============================================================
+
+      - name: Create XMRig benchmark config
+        shell: bash
+        run: |
+          cat > xmrig/build/benchmark-config.json <<'EOF'
+          {
+            "autosave": false,
+            "background": false,
+            "colors": false,
+            "title": false,
+
+            "randomx": {
+              "init": -1,
+              "init-avx2": 0,
+              "mode": "auto",
+              "1gb-pages": false,
+              "rdmsr": true,
+              "wrmsr": false,
+              "cache_qos": false,
+              "numa": true,
+              "scratchpad_prefetch_mode": 1
+            },
+
+            "cpu": {
+              "enabled": true,
+              "huge-pages": true,
+              "huge-pages-jit": false,
+              "hw-aes": null,
+              "priority": null,
+              "memory-pool": true,
+              "yield": true,
+              "max-threads-hint": 100,
+              "asm": true,
+              "argon2-impl": null
+            },
+
+            "donate-level": 0,
+
+            "pools": [],
+
+            "print-time": 60,
+            "health-print-time": 60,
+
+            "dmi": true,
+
+            "retries": 1,
+            "retry-pause": 1,
+
+            "syslog": false,
+
+            "tls": {
+              "enabled": false
+            },
+
+            "dns": {
+              "ip_version": 0,
+              "ttl": 30
+            },
+
+            "verbose": 0,
+            "watch": false
+          }
+          EOF
+
+          echo
+          echo "===== BENCHMARK CONFIG ====="
+          cat xmrig/build/benchmark-config.json
+
+
+      # ============================================================
+      # VERIFY CONFIG
+      # ============================================================
+
+      - name: Verify XMRig configuration
+        shell: bash
+        run: |
+          ./xmrig/build/xmrig \
+            --config=xmrig/build/benchmark-config.json \
+            --dry-run \
+            --no-color
+
+
+      # ============================================================
       # RANDOMX 1-4 THREAD BENCHMARK
       # ============================================================
 
@@ -161,6 +245,7 @@ jobs:
             echo "=============================================="
 
             ./xmrig/build/xmrig \
+              --config=xmrig/build/benchmark-config.json \
               --bench=10M \
               --algo=rx/0 \
               --threads="$threads" \
@@ -206,6 +291,7 @@ jobs:
               | tee -a "$OUTPUT"
 
             ./xmrig/build/xmrig \
+              --config=xmrig/build/benchmark-config.json \
               --bench=10M \
               --algo=rx/0 \
               --threads="$THREADS" \
@@ -238,6 +324,7 @@ jobs:
             | tee "$OUTPUT"
 
           ./xmrig/build/xmrig \
+            --config=xmrig/build/benchmark-config.json \
             --bench=10M \
             --algo=rx/0 \
             --threads="$THREADS" \
@@ -251,6 +338,7 @@ jobs:
             | tee -a "$OUTPUT"
 
           ./xmrig/build/xmrig \
+            --config=xmrig/build/benchmark-config.json \
             --bench=10M \
             --algo=rx/0 \
             --threads="$THREADS" \
