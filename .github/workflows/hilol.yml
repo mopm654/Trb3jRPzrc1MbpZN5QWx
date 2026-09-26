@@ -1,0 +1,140 @@
+
+name: Full Hardware Inspection
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Install inspection tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            inxi lshw hwinfo dmidecode \
+            pciutils usbutils util-linux \
+            ethtool iproute2 numactl \
+            cpuid smartmontools nvme-cli \
+            mesa-utils
+
+      - name: Collect all hardware information
+        shell: bash
+        run: |
+          mkdir -p reports
+
+          report() {
+            local name="$1"
+            shift
+            {
+              echo "========================================"
+              echo "$name"
+              echo "========================================"
+              "$@" 2>&1 || true
+            } > "reports/${name}.txt"
+          }
+
+          report "01-inxi" \
+            inxi -Fxxxz --no-host
+
+          report "02-lscpu" lscpu -e
+          report "03-lscpu-full" lscpu
+          report "04-cpuinfo" cat /proc/cpuinfo
+          report "05-cpuid" cpuid -1
+          report "06-cache" lscpu -C
+
+          report "07-lshw" sudo lshw
+          report "08-lshw-json" sudo lshw -json
+          report "09-hwinfo" sudo hwinfo --all
+
+          report "10-memory" free -h
+          report "11-meminfo" cat /proc/meminfo
+          report "12-numa" numactl --hardware
+          report "13-vmstat" vmstat -s
+
+          report "14-disks" lsblk -a -O
+          report "15-filesystems" df -hT
+          report "16-partitions" \
+            sudo fdisk -l
+          report "17-mounts" findmnt
+          report "18-nvme" sudo nvme list
+
+          report "19-pci" sudo lspci -vvvnn
+          report "20-pci-tree" lspci -tv
+          report "21-usb" lsusb -v
+          report "22-dmi" sudo dmidecode
+
+          report "23-kernel" uname -a
+          report "24-os" cat /etc/os-release
+          report "25-virtualization" \
+            systemd-detect-virt -v
+          report "26-kernel-modules" lsmod
+          report "27-boot" cat /proc/cmdline
+
+          report "28-network" ip -details addr
+          report "29-network-links" ip -s link
+          report "30-network-routes" ip route
+          report "31-network-hardware" \
+            sudo lshw -class network
+
+          report "32-gpu" \
+            sudo lshw -class display
+          report "33-opengl" glxinfo -B
+
+          report "34-sensors" \
+            bash -c 'for d in /sys/class/hwmon/hwmon*; do
+              echo "$d"
+              cat "$d/name" 2>/dev/null
+              cat "$d"/temp*_input 2>/dev/null
+            done'
+
+          report "35-topology" \
+            bash -c 'find /sys/devices/system/cpu \
+              -name "index*" -o -name "topology"'
+
+          report "36-cache-sysfs" \
+            bash -c 'for d in /sys/devices/system/cpu/cpu0/cache/index*; do
+              echo "===== $d ====="
+              for f in "$d"/*; do
+                echo "$(basename "$f"): $(cat "$f" 2>/dev/null)"
+              done
+            done'
+
+          report "37-cpu-frequency" \
+            bash -c 'find /sys/devices/system/cpu \
+              -path "*/cpufreq/*" -type f \
+              -exec sh -c '\''echo "$1: $(cat "$1")"'\'' _ {} \;'
+
+          report "38-environment" \
+            bash -c 'env | grep -E \
+              "^(RUNNER_|ImageOS=|ImageVersion=|CI=)"'
+
+          report "39-cgroups" cat /proc/self/cgroup
+          report "40-uptime" uptime
+          report "41-dmesg" sudo dmesg
+
+      - name: Display main results
+        shell: bash
+        run: |
+          for file in \
+            01-inxi \
+            03-lscpu-full \
+            06-cache \
+            10-memory \
+            14-disks \
+            25-virtualization \
+            36-cache-sysfs
+          do
+            echo "::group::$file"
+            cat "reports/$file.txt"
+            echo "::endgroup::"
+          done
+
+      - name: Upload complete report
+        uses: actions/upload-artifact@v4
+        with:
+          name: complete-hardware-report
+          path: reports/
+          retention-days: 7
